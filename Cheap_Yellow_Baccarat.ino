@@ -142,6 +142,7 @@ void pushBead(uint8_t o) {
 // -------------------------------------------------------------- Settings ---
 Preferences prefs;        // NVS namespace "baccarat", survives reboots
 bool soundOn = true;
+bool teachOn = false;     // tutor mode: pause and explain each drawing rule
 
 // ---------------------------------------------------------------- Layout ---
 #define TABLE_Y  32
@@ -162,8 +163,9 @@ const Zone Z_PLUS  = {  88, 202,  30, 34 };
 const Zone Z_CLEAR = { 128, 202,  80, 34 };
 const Zone Z_DEAL  = { 216, 202, 102, 34 };
 const Zone Z_TITLE = {   0,   0, 110, 18 };  // hidden: tap "BACCARAT" for settings
-const Zone Z_SOUND = {  60,  90, 200, 44 };  // settings screen
-const Zone Z_DONE  = {  60, 170, 200, 44 };
+const Zone Z_SOUND = {  60,  66, 200, 40 };  // settings screen
+const Zone Z_TEACH = {  60, 116, 200, 40 };
+const Zone Z_DONE  = {  60, 186, 200, 40 };
 
 bool inZone(const Zone& z, int x, int y) {
   return x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h;
@@ -363,22 +365,23 @@ void drawResultPanel(const char* headline, uint16_t col, int net, bool gameOver)
 }
 
 // ------------------------------------------------------- Settings screen ---
-void drawSoundButton() {
-  uint16_t col = soundOn ? TFT_GREEN : COL_BANKER;
-  tft.fillRoundRect(Z_SOUND.x, Z_SOUND.y, Z_SOUND.w, Z_SOUND.h, 5, COL_PANEL);
-  tft.drawRoundRect(Z_SOUND.x, Z_SOUND.y, Z_SOUND.w, Z_SOUND.h, 5, col);
+void drawToggle(const Zone& z, const char* name, bool on) {
+  uint16_t col = on ? TFT_GREEN : COL_BANKER;
+  tft.fillRoundRect(z.x, z.y, z.w, z.h, 5, COL_PANEL);
+  tft.drawRoundRect(z.x, z.y, z.w, z.h, 5, col);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(col, COL_PANEL);
-  tft.drawString(soundOn ? "SOUND: ON" : "SOUND: OFF",
-                 Z_SOUND.x + Z_SOUND.w / 2, Z_SOUND.y + Z_SOUND.h / 2, 4);
+  tft.drawString(String(name) + (on ? ": ON" : ": OFF"),
+                 z.x + z.w / 2, z.y + z.h / 2, 4);
 }
 
 void drawSettingsScreen() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(COL_GOLD, TFT_BLACK);
-  tft.drawString("SETTINGS", 160, 36, 4);
-  drawSoundButton();
+  tft.drawString("SETTINGS", 160, 30, 4);
+  drawToggle(Z_SOUND, "SOUND", soundOn);
+  drawToggle(Z_TEACH, "TUTOR", teachOn);
   tft.fillRoundRect(Z_DONE.x, Z_DONE.y, Z_DONE.w, Z_DONE.h, 5, TFT_DARKGREEN);
   tft.drawRoundRect(Z_DONE.x, Z_DONE.y, Z_DONE.w, Z_DONE.h, 5, TFT_GREEN);
   tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
@@ -408,6 +411,66 @@ void revealCard(bool banker, int i, uint8_t c) {
   delay(340);
 }
 
+// --------------------------------------------------------------- Tutor ---
+void showInstruction(const char* l1, const char* l2, const char* l3) {
+  tft.fillRect(0, PANEL_Y, 320, 240 - PANEL_Y, TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString(l1, 160, 166, 2);
+  tft.drawString(l2, 160, 184, 2);
+  tft.setTextColor(COL_GOLD, TFT_BLACK);
+  tft.drawString(l3, 160, 202, 2);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString("Tap to continue", 160, 226, 2);
+}
+
+// Blocks until a fresh tap: waits out any held press, then a press+release.
+void waitForTap() {
+  while (ts.touched())  delay(20);
+  while (!ts.touched()) delay(20);
+  while (ts.touched())  delay(20);
+}
+
+// Walks the third-card tableau step by step. The hand is already fully dealt
+// by playHand(), so each explanation is derived from what actually happened.
+void teachHand() {
+  uint8_t pv = handValue(pCards, 2), bv = handValue(bCards, 2);
+  char l1[44], l2[44];
+
+  if (natural) {
+    if (pv >= 8 && bv >= 8) strcpy(l1, "Both hands are naturals!");
+    else snprintf(l1, sizeof l1, "%s has a natural %d!",
+                  pv >= 8 ? "Player" : "Banker", pv >= 8 ? pv : bv);
+    showInstruction(l1, "An 8 or 9 in two cards ends the hand.",
+                    "-> No third cards.");
+    waitForTap();
+    return;
+  }
+
+  snprintf(l1, sizeof l1, "Player has %d.", pv);
+  showInstruction(l1, "Rule: Player draws on 0-5, stands on 6-7.",
+                  pN > 2 ? "-> Player draws a card." : "-> Player stands.");
+  waitForTap();
+  if (pN > 2) revealCard(false, 2, pCards[2]);
+
+  if (pN == 2) {
+    snprintf(l1, sizeof l1, "Banker has %d. Player stood.", bv);
+    strcpy(l2, "Rule: draw on 0-5, stand on 6-7.");
+  } else {
+    snprintf(l1, sizeof l1, "Banker has %d. 3rd card was worth %d.",
+             bv, cardPoints(pCards[2]));
+    if      (bv <= 2) strcpy(l2, "Rule: with 0-2 always draw.");
+    else if (bv == 3) strcpy(l2, "Rule: with 3, draw unless it was an 8.");
+    else if (bv == 4) strcpy(l2, "Rule: with 4, draw only vs 2-7.");
+    else if (bv == 5) strcpy(l2, "Rule: with 5, draw only vs 4-7.");
+    else if (bv == 6) strcpy(l2, "Rule: with 6, draw only vs 6-7.");
+    else              strcpy(l2, "Rule: with 7 always stand.");
+  }
+  showInstruction(l1, l2, bN > 2 ? "-> Banker draws." : "-> Banker stands.");
+  waitForTap();
+  if (bN > 2) revealCard(true, 2, bCards[2]);
+}
+
 void runDeal() {
   if (SHOE_SIZE - shoePos < CUT_CARD) {
     tft.fillRect(0, PANEL_Y, 320, 240 - PANEL_Y, TFT_BLACK);
@@ -430,8 +493,12 @@ void runDeal() {
   revealCard(true,  0, bCards[0]);
   revealCard(false, 1, pCards[1]);
   revealCard(true,  1, bCards[1]);
-  if (pN > 2) { delay(300); revealCard(false, 2, pCards[2]); }
-  if (bN > 2) { delay(300); revealCard(true,  2, bCards[2]); }
+  if (teachOn) {
+    teachHand();
+  } else {
+    if (pN > 2) { delay(300); revealCard(false, 2, pCards[2]); }
+    if (bN > 2) { delay(300); revealCard(true,  2, bCards[2]); }
+  }
 
   uint8_t pv = handValue(pCards, pN), bv = handValue(bCards, bN);
   Outcome res = pv > bv ? WIN_PLAYER : bv > pv ? WIN_BANKER : WIN_TIE;
@@ -532,8 +599,13 @@ void handleTap(int x, int y) {
       if (inZone(Z_SOUND, x, y)) {
         soundOn = !soundOn;
         prefs.putBool("sound", soundOn);
-        drawSoundButton();
+        drawToggle(Z_SOUND, "SOUND", soundOn);
         sClick();               // audible confirmation only when unmuting
+      } else if (inZone(Z_TEACH, x, y)) {
+        teachOn = !teachOn;
+        prefs.putBool("teach", teachOn);
+        drawToggle(Z_TEACH, "TUTOR", teachOn);
+        sClick();
       } else if (inZone(Z_DONE, x, y)) {
         sClick();
         state = ST_BETTING;
@@ -563,6 +635,7 @@ void setup() {
 
   prefs.begin("baccarat", false);
   soundOn = prefs.getBool("sound", true);
+  teachOn = prefs.getBool("teach", false);
 
   shuffleShoe();
   drawMainScreen();

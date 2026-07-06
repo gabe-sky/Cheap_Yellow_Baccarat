@@ -50,7 +50,7 @@ TFT_eSPI tft = TFT_eSPI();
 // inserts its auto-generated prototypes right above the first function, and
 // prototypes referencing Zone/Outcome fail if the types are declared later.
 enum Outcome { WIN_PLAYER, WIN_BANKER, WIN_TIE };
-enum State   { ST_BETTING, ST_RESULT, ST_GAMEOVER, ST_SETTINGS };
+enum State   { ST_BETTING, ST_RESULT, ST_GAMEOVER, ST_BUSTED, ST_SETTINGS };
 struct Zone  { int x, y, w, h; };
 
 // ------------------------------------------------------------------ Shoe ---
@@ -194,6 +194,29 @@ void playSeq(const int* f, int n, int ms) {
 void sWin()  { const int f[] = { 523, 659, 784, 1047 }; playSeq(f, 4, 120); }
 void sLose() { const int f[] = { 330, 262, 196 };       playSeq(f, 3, 160); }
 void sTie()  { const int f[] = { 440, 440 };            playSeq(f, 2, 140); }
+// Sad trombone for the bust screen: three descending womps, then a long
+// final note with a mournful wobble. Uses continuous tone() for the slides.
+void sBust() {
+  if (!soundOn) return;
+  const int womp[] = { 294, 277, 262, 233 };
+  for (int n = 0; n < 4; n++) {
+    bool last = (n == 3);
+    for (int f = womp[n] + 25; f >= womp[n]; f -= 5) {  // slide down into it
+      tone(SPEAKER_PIN, f);
+      delay(18);
+    }
+    delay(last ? 100 : 160);
+    if (last) {
+      for (int i = 0; i < 6; i++) {                     // womppppp...
+        tone(SPEAKER_PIN, womp[n] - 8); delay(70);
+        tone(SPEAKER_PIN, womp[n]);     delay(70);
+      }
+    }
+    noTone(SPEAKER_PIN);
+    delay(60);
+  }
+}
+
 void sShuffle() {
   for (int i = 0; i < 8; i++) {
     if (soundOn) tone(SPEAKER_PIN, 700 + (esp_random() % 600), 18);
@@ -360,7 +383,7 @@ void drawResultPanel(const char* headline, uint16_t col, int net, bool gameOver)
               : net < 0 ? "You lose $" + String(-net) : "Push";
   tft.drawString(line, 160, 200, 2);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString(gameOver ? "BUSTED - tap to restart with $1000"
+  tft.drawString(gameOver ? "You're busted - tap to continue"
                           : "Tap to continue", 160, 224, 2);
 }
 
@@ -386,6 +409,17 @@ void drawSettingsScreen() {
   tft.drawRoundRect(Z_DONE.x, Z_DONE.y, Z_DONE.w, Z_DONE.h, 5, TFT_GREEN);
   tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
   tft.drawString("DONE", Z_DONE.x + Z_DONE.w / 2, Z_DONE.y + Z_DONE.h / 2, 4);
+}
+
+void drawBustScreen() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(COL_BANKER, TFT_BLACK);
+  tft.drawString("BUSTED", 160, 80, 4);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString("to-do: put mocking screen here", 160, 130, 2);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString("Tap to rebuy for $1000", 160, 210, 2);
 }
 
 // Full redraw of the betting screen (boot, leaving settings, bust restart).
@@ -589,6 +623,11 @@ void handleTap(int x, int y) {
       break;
     case ST_GAMEOVER:
       ledOff();
+      state = ST_BUSTED;
+      drawBustScreen();
+      sBust();
+      break;
+    case ST_BUSTED:
       bankroll = 1000;
       beadCount = 0;
       shuffleShoe();

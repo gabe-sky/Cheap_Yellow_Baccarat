@@ -121,9 +121,9 @@ void playHand() {
 // --------------------------------------------------------------- Betting ---
 State state = ST_BETTING;
 
-const int CHIPS[] = { 10, 25, 50, 100 };
-#define N_CHIPS 4
-int chipIdx  = 1;                 // start on $25
+const int CHIPS[] = { 1, 10, 25, 50, 100, 500 };
+#define N_CHIPS 6
+int chipIdx  = 2;                 // start on $25
 int bankroll = 1000;
 int betP = 0, betB = 0, betT = 0; // deducted from bankroll as placed
 

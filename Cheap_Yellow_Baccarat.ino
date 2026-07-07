@@ -50,7 +50,8 @@ TFT_eSPI tft = TFT_eSPI();
 // inserts its auto-generated prototypes right above the first function, and
 // prototypes referencing Zone/Outcome fail if the types are declared later.
 enum Outcome { WIN_PLAYER, WIN_BANKER, WIN_TIE };
-enum State   { ST_BETTING, ST_RESULT, ST_GAMEOVER, ST_BUSTED, ST_SETTINGS };
+enum State   { ST_BETTING, ST_RESULT, ST_GAMEOVER, ST_BUSTED, ST_SETTINGS,
+               ST_SCORES, ST_NAME, ST_SCORES_VIEW };
 struct Zone  { int x, y, w, h; };
 
 // ------------------------------------------------------------------ Shoe ---
@@ -144,6 +145,53 @@ Preferences prefs;        // NVS namespace "baccarat", survives reboots
 bool soundOn = true;
 bool teachOn = false;     // tutor mode: pause and explain each drawing rule
 
+// ------------------------------------------------------------ High scores ---
+// Top five cash-outs of all time, persisted in NVS (keys hs0n/hs0v..hs4n/hs4v).
+#define NAME_MAX 16       // fits font 4 on the entry line and font 2 list rows
+char hsName[5][NAME_MAX + 1];
+int  hsVal[5] = { 0, 0, 0, 0, 0 };
+int  hsNew = -1;          // freshly inserted row, highlighted on the view screen
+int  cashPending = 0;     // amount being cashed out while the name is entered
+char nameBuf[NAME_MAX + 1];
+int  nameLen = 0;
+
+void loadScores() {
+  char k[8];
+  for (int i = 0; i < 5; i++) {
+    snprintf(k, sizeof k, "hs%dv", i);
+    hsVal[i] = prefs.getInt(k, 0);
+    snprintf(k, sizeof k, "hs%dn", i);
+    String s = prefs.getString(k, "");
+    strncpy(hsName[i], s.c_str(), NAME_MAX);
+    hsName[i][NAME_MAX] = 0;
+  }
+}
+
+void saveScores() {
+  char k[8];
+  for (int i = 0; i < 5; i++) {
+    snprintf(k, sizeof k, "hs%dv", i);
+    prefs.putInt(k, hsVal[i]);
+    snprintf(k, sizeof k, "hs%dn", i);
+    prefs.putString(k, hsName[i]);
+  }
+}
+
+// Returns the row the score landed in, or -1 if it doesn't make the table.
+int insertScore(const char* nm, int v) {
+  int pos = -1;
+  for (int i = 0; i < 5; i++) if (v > hsVal[i]) { pos = i; break; }
+  if (pos < 0) return -1;
+  for (int i = 4; i > pos; i--) {
+    hsVal[i] = hsVal[i - 1];
+    strcpy(hsName[i], hsName[i - 1]);
+  }
+  hsVal[pos] = v;
+  strncpy(hsName[pos], nm, NAME_MAX);
+  hsName[pos][NAME_MAX] = 0;
+  return pos;
+}
+
 // ---------------------------------------------------------------- Layout ---
 #define TABLE_Y  32
 #define TABLE_H  122          // felt: y 32..153
@@ -166,6 +214,15 @@ const Zone Z_TITLE = {   0,   0, 110, 18 };  // hidden: tap "BACCARAT" for setti
 const Zone Z_SOUND = {  60,  66, 200, 40 };  // settings screen
 const Zone Z_TEACH = {  60, 116, 200, 40 };
 const Zone Z_DONE  = {  60, 186, 200, 40 };
+const Zone Z_BANK  = { 230,   0,  90, 18 };  // bankroll tap -> high scores
+const Zone Z_CASH  = {  30, 186, 120, 40 };  // high-score screen buttons
+const Zone Z_CANCL = { 170, 186, 120, 40 };
+
+// Name-entry keyboard: 7x4 grid, cells 0-25 = A-Z, 26 = DEL, 27 = OK.
+#define KB_X0 6
+#define KB_Y0 64
+#define KB_CW 44
+#define KB_CH 34
 
 bool inZone(const Zone& z, int x, int y) {
   return x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h;
@@ -434,6 +491,72 @@ void drawMainScreen() {
   drawBetPanel();
 }
 
+// ------------------------------------------------ Cash out / high scores ---
+void drawScoresScreen(bool viewOnly) {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(COL_GOLD, TFT_BLACK);
+  tft.drawString("HIGH SCORES", 160, 24, 4);
+  for (int i = 0; i < 5; i++) {
+    int y = 56 + i * 22;
+    uint16_t col = (viewOnly && i == hsNew) ? COL_GOLD
+                 : hsName[i][0] ? TFT_WHITE : TFT_DARKGREY;
+    tft.setTextColor(col, TFT_BLACK);
+    tft.setTextDatum(ML_DATUM);
+    tft.drawString(String(i + 1) + ". " + (hsName[i][0] ? hsName[i] : "-------"),
+                   44, y, 2);
+    tft.setTextDatum(MR_DATUM);
+    if (hsName[i][0]) tft.drawString("$" + String(hsVal[i]), 276, y, 2);
+  }
+  tft.setTextDatum(MC_DATUM);
+  if (viewOnly) {
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString("Tap to continue", 160, 216, 2);
+  } else {
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("Cash out $" + String(bankroll + betP + betB + betT) + "?",
+                   160, 168, 2);
+    tft.fillRoundRect(Z_CASH.x, Z_CASH.y, Z_CASH.w, Z_CASH.h, 5, TFT_DARKGREEN);
+    tft.drawRoundRect(Z_CASH.x, Z_CASH.y, Z_CASH.w, Z_CASH.h, 5, TFT_GREEN);
+    tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+    tft.drawString("CASH OUT", Z_CASH.x + Z_CASH.w / 2, Z_CASH.y + Z_CASH.h / 2, 2);
+    tft.fillRoundRect(Z_CANCL.x, Z_CANCL.y, Z_CANCL.w, Z_CANCL.h, 5, COL_PANEL);
+    tft.drawRoundRect(Z_CANCL.x, Z_CANCL.y, Z_CANCL.w, Z_CANCL.h, 5, TFT_LIGHTGREY);
+    tft.setTextColor(TFT_WHITE, COL_PANEL);
+    tft.drawString("CANCEL", Z_CANCL.x + Z_CANCL.w / 2, Z_CANCL.y + Z_CANCL.h / 2, 2);
+  }
+}
+
+void drawNameKey(int idx) {
+  int x = KB_X0 + (idx % 7) * KB_CW, y = KB_Y0 + (idx / 7) * KB_CH;
+  char one[2] = { (char)('A' + idx), 0 };
+  const char* lbl = idx < 26 ? one : idx == 26 ? "DEL" : "OK";
+  uint16_t col = idx < 26 ? TFT_LIGHTGREY : idx == 26 ? COL_BANKER : TFT_GREEN;
+  tft.fillRoundRect(x, y, KB_CW - 4, KB_CH - 4, 4, COL_PANEL);
+  tft.drawRoundRect(x, y, KB_CW - 4, KB_CH - 4, 4, col);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(idx < 26 ? TFT_WHITE : col, COL_PANEL);
+  tft.drawString(lbl, x + (KB_CW - 4) / 2, y + (KB_CH - 4) / 2, 2);
+}
+
+void drawNameText() {
+  tft.fillRect(0, 24, 320, 32, TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  String s = String(nameBuf);
+  if (nameLen < NAME_MAX) s += "_";
+  tft.drawString(s, 160, 40, 4);
+}
+
+void drawNameEntry() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(COL_GOLD, TFT_BLACK);
+  tft.drawString("NEW HIGH SCORE - enter your name", 160, 10, 2);
+  drawNameText();
+  for (int i = 0; i < 28; i++) drawNameKey(i);
+}
+
 // ------------------------------------------------------------- Deal flow ---
 void revealCard(bool banker, int i, uint8_t c) {
   int x = cardX(banker, i);
@@ -581,11 +704,73 @@ void runDeal() {
 }
 
 // ------------------------------------------------------------ Touch flow ---
+void resetGame() {
+  bankroll = 1000;
+  betP = betB = betT = 0;
+  beadCount = 0;
+  shuffleShoe();
+  state = ST_BETTING;
+  drawMainScreen();
+}
+
+void handleTapScores(int x, int y) {
+  if (inZone(Z_CANCL, x, y)) {
+    sClick();
+    state = ST_BETTING;
+    drawMainScreen();       // bets were left on the table; panel still shows them
+  } else if (inZone(Z_CASH, x, y)) {
+    sClick();
+    cashPending = bankroll + betP + betB + betT;   // pick your chips back up too
+    Serial.printf("Cash out: $%d\n", cashPending);
+    if (cashPending > hsVal[4]) {
+      nameLen = 0;
+      nameBuf[0] = 0;
+      state = ST_NAME;
+      drawNameEntry();
+    } else {
+      resetGame();          // no glory, straight back to a fresh $1000
+    }
+  }
+}
+
+void handleTapName(int x, int y) {
+  if (x < KB_X0 || y < KB_Y0) return;
+  int col = (x - KB_X0) / KB_CW, row = (y - KB_Y0) / KB_CH;
+  if (col > 6 || row > 3) return;
+  int idx = row * 7 + col;
+  if (idx < 26) {
+    if (nameLen < NAME_MAX) {
+      nameBuf[nameLen++] = 'A' + idx;
+      nameBuf[nameLen] = 0;
+      sClick();
+      drawNameText();
+    }
+  } else if (idx == 26) {
+    if (nameLen > 0) {
+      nameBuf[--nameLen] = 0;
+      sClick();
+      drawNameText();
+    }
+  } else if (nameLen > 0) {  // OK needs at least one letter
+    hsNew = insertScore(nameBuf, cashPending);
+    saveScores();
+    sWin();
+    state = ST_SCORES_VIEW;
+    drawScoresScreen(true);
+  }
+}
+
 void handleTapBetting(int x, int y) {
   if (inZone(Z_TITLE, x, y)) {
     sClick();
     state = ST_SETTINGS;
     drawSettingsScreen();
+    return;
+  }
+  if (inZone(Z_BANK, x, y)) {
+    sClick();
+    state = ST_SCORES;
+    drawScoresScreen(false);
     return;
   }
   int chip = CHIPS[chipIdx];
@@ -628,11 +813,17 @@ void handleTap(int x, int y) {
       sBust();
       break;
     case ST_BUSTED:
-      bankroll = 1000;
-      beadCount = 0;
-      shuffleShoe();
-      state = ST_BETTING;
-      drawMainScreen();
+      resetGame();
+      break;
+    case ST_SCORES:
+      handleTapScores(x, y);
+      break;
+    case ST_NAME:
+      handleTapName(x, y);
+      break;
+    case ST_SCORES_VIEW:
+      hsNew = -1;
+      resetGame();
       break;
     case ST_SETTINGS:
       if (inZone(Z_SOUND, x, y)) {
@@ -675,6 +866,7 @@ void setup() {
   prefs.begin("baccarat", false);
   soundOn = prefs.getBool("sound", true);
   teachOn = prefs.getBool("teach", false);
+  loadScores();
 
   shuffleShoe();
   drawMainScreen();

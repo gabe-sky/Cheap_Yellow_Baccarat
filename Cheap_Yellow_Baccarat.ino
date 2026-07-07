@@ -127,6 +127,7 @@ const int CHIPS[] = { 1, 10, 25, 50, 100, 500 };
 int chipIdx  = 2;                 // start on $25
 int bankroll = 1000;
 int betP = 0, betB = 0, betT = 0; // deducted from bankroll as placed
+int lastBetP = 0, lastBetB = 0, lastBetT = 0; // previous hand's bet, for REBET
 
 // Bead road: last results, blue=Player red=Banker green=Tie.
 #define MAX_BEADS 31
@@ -418,6 +419,21 @@ void drawDealButton() {
   tft.drawString("DEAL", Z_DEAL.x + Z_DEAL.w / 2, Z_DEAL.y + Z_DEAL.h / 2, 4);
 }
 
+// One button, two jobs: CLEAR while chips are down, REBET when the table is
+// empty and last hand's bet can be repeated (greyed if unaffordable).
+void drawClearButton() {
+  int total = betP + betB + betT;
+  int lastTotal = lastBetP + lastBetB + lastBetT;
+  if (total == 0 && lastTotal > 0) {
+    bool ok = bankroll >= lastTotal;
+    drawButton(Z_CLEAR, "REBET", ok ? COL_GOLD : TFT_DARKGREY,
+               ok ? COL_GOLD : TFT_DARKGREY);
+  } else {
+    drawButton(Z_CLEAR, "CLEAR", total ? TFT_LIGHTGREY : TFT_DARKGREY,
+               total ? TFT_WHITE : TFT_DARKGREY);
+  }
+}
+
 void drawBetPanel() {
   tft.fillRect(0, PANEL_Y, 320, 240 - PANEL_Y, TFT_BLACK);
   drawBetZone(Z_BETP, "PLAYER", betP, COL_PLAYER);
@@ -425,7 +441,7 @@ void drawBetPanel() {
   drawBetZone(Z_BETB, "BANKER", betB, COL_BANKER);
   drawButton(Z_MINUS, "-", TFT_LIGHTGREY, TFT_WHITE);
   drawButton(Z_PLUS,  "+", TFT_LIGHTGREY, TFT_WHITE);
-  drawButton(Z_CLEAR, "CLEAR", TFT_LIGHTGREY, TFT_WHITE);
+  drawClearButton();
   drawChipValue();
   drawDealButton();
 }
@@ -668,6 +684,7 @@ void runDeal() {
   else                        winnings = betT * 9 + betP + betB;
   bankroll += winnings;
   int net = winnings - stake;
+  lastBetP = betP; lastBetB = betB; lastBetT = betT;   // remembered for REBET
   betP = betB = betT = 0;
 
   pushBead(res);
@@ -707,6 +724,7 @@ void runDeal() {
 void resetGame() {
   bankroll = 1000;
   betP = betB = betT = 0;
+  lastBetP = lastBetB = lastBetT = 0;   // no rebets across lifetimes
   beadCount = 0;
   shuffleShoe();
   state = ST_BETTING;
@@ -776,22 +794,31 @@ void handleTapBetting(int x, int y) {
   int chip = CHIPS[chipIdx];
   if (inZone(Z_BETP, x, y) && bankroll >= chip) {
     betP += chip; bankroll -= chip; sChip();
-    drawBetZone(Z_BETP, "PLAYER", betP, COL_PLAYER); drawHeader(); drawDealButton();
+    drawBetZone(Z_BETP, "PLAYER", betP, COL_PLAYER);
+    drawHeader(); drawDealButton(); drawClearButton();
   } else if (inZone(Z_BETT, x, y) && bankroll >= chip) {
     betT += chip; bankroll -= chip; sChip();
-    drawBetZone(Z_BETT, "TIE 8:1", betT, COL_TIE); drawHeader(); drawDealButton();
+    drawBetZone(Z_BETT, "TIE 8:1", betT, COL_TIE);
+    drawHeader(); drawDealButton(); drawClearButton();
   } else if (inZone(Z_BETB, x, y) && bankroll >= chip) {
     betB += chip; bankroll -= chip; sChip();
-    drawBetZone(Z_BETB, "BANKER", betB, COL_BANKER); drawHeader(); drawDealButton();
+    drawBetZone(Z_BETB, "BANKER", betB, COL_BANKER);
+    drawHeader(); drawDealButton(); drawClearButton();
   } else if (inZone(Z_MINUS, x, y)) {
     if (chipIdx > 0) { chipIdx--; sClick(); drawChipValue(); }
   } else if (inZone(Z_PLUS, x, y)) {
     if (chipIdx < N_CHIPS - 1) { chipIdx++; sClick(); drawChipValue(); }
   } else if (inZone(Z_CLEAR, x, y)) {
-    if (betP + betB + betT > 0) {
-      bankroll += betP + betB + betT;
+    int total = betP + betB + betT;
+    int lastTotal = lastBetP + lastBetB + lastBetT;
+    if (total > 0) {                                    // CLEAR
+      bankroll += total;
       betP = betB = betT = 0;
       sClick(); drawBetPanel(); drawHeader();
+    } else if (lastTotal > 0 && bankroll >= lastTotal) { // REBET
+      betP = lastBetP; betB = lastBetB; betT = lastBetT;
+      bankroll -= lastTotal;
+      sChip(); drawBetPanel(); drawHeader();
     }
   } else if (inZone(Z_DEAL, x, y)) {
     if (betP + betB + betT > 0) runDeal();

@@ -129,6 +129,29 @@ int bankroll = 1000;
 int betP = 0, betB = 0, betT = 0; // deducted from bankroll as placed
 int lastBetP = 0, lastBetB = 0, lastBetT = 0; // previous hand's bet, for REBET
 
+// Death chart: bankroll after every hand of the current life, drawn on the
+// bust screen. Within-run only — each bust earns its own fresh shame.
+#define RUN_MAX 128
+int runHist[RUN_MAX];
+int runLen = 0;
+int handsThisRun = 0;      // true hand count (survives decimation)
+int runPeak = 1000;
+
+void recordRunPoint(int v) {
+  if (runLen == RUN_MAX) {   // full: drop every other point, keep the arc
+    for (int i = 0; i < RUN_MAX / 2; i++) runHist[i] = runHist[i * 2];
+    runLen = RUN_MAX / 2;
+  }
+  runHist[runLen++] = v;
+}
+
+void resetRunStats() {
+  runLen = 0;
+  handsThisRun = 0;
+  runPeak = bankroll;
+  recordRunPoint(bankroll);
+}
+
 // Bead road: last results, blue=Player red=Banker green=Tie.
 #define MAX_BEADS 31
 uint8_t beads[MAX_BEADS];
@@ -456,7 +479,7 @@ void drawResultPanel(const char* headline, uint16_t col, int net, bool gameOver)
               : net < 0 ? "You lose $" + String(-net) : "Push";
   tft.drawString(line, 160, 200, 2);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString(gameOver ? "You're busted - tap to continue"
+  tft.drawString(gameOver ? "Out of chips - tap to continue"
                           : "Tap to continue", 160, 224, 2);
 }
 
@@ -484,15 +507,93 @@ void drawSettingsScreen() {
   tft.drawString("DONE", Z_DONE.x + Z_DONE.w / 2, Z_DONE.y + Z_DONE.h / 2, 4);
 }
 
+// One informative line about the run that just ended, most notable fact first.
+void runSummary(char* buf, size_t n) {
+  if (hsVal[0] > 0 && runPeak > hsVal[0])
+    snprintf(buf, n, "Peak $%d was past the high score.", runPeak);
+  else if (hsVal[4] > 0 && runPeak > hsVal[4])
+    snprintf(buf, n, "Peak $%d would have made the top five.", runPeak);
+  else if (runPeak >= 2500)
+    snprintf(buf, n, "Peak bankroll this run: $%d.", runPeak);
+  else if (handsThisRun == 1)
+    snprintf(buf, n, "Busted on the first hand.");
+  else
+    snprintf(buf, n, "This run lasted %d hands.", handsThisRun);
+}
+
+// Death-chart plot area, shared by drawBustScreen and its threshold lines.
+#define CHART_X 30
+#define CHART_Y 48
+#define CHART_W 260
+#define CHART_H 100
+
+// Dashed score line across the chart, skipped if above the plot ceiling.
+// label may be nullptr for an unlabeled context line.
+void drawChartLevel(int v, const char* label, uint16_t col, bool labelLeft,
+                    int maxV) {
+  int ry = CHART_Y + CHART_H - (long)v * CHART_H / maxV;
+  if (ry <= CHART_Y + 2) return;
+  for (int x = CHART_X; x < CHART_X + CHART_W; x += 8)
+    tft.drawFastHLine(x, ry, 4, col);
+  if (!label) return;
+  tft.setTextDatum(labelLeft ? ML_DATUM : MR_DATUM);
+  tft.setTextColor(col, TFT_BLACK);
+  tft.drawString(String(label) + " $" + String(v),
+                 labelLeft ? CHART_X : CHART_X + CHART_W,
+                 ry < CHART_Y + 14 ? ry + 10 : ry - 9, 2);
+}
+
 void drawBustScreen() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(COL_BANKER, TFT_BLACK);
-  tft.drawString("BUSTED", 160, 80, 4);
+  tft.setTextColor(COL_GOLD, TFT_BLACK);
+  tft.drawString("OUT OF CHIPS", 160, 18, 4);
+
+  // The death chart: the whole run, $0-terminated.
+  const int cx0 = CHART_X, cy0 = CHART_Y, cw = CHART_W, ch = CHART_H;
+  tft.drawFastHLine(cx0, cy0 + ch, cw, TFT_DARKGREY);   // the floor: $0
+  int peakI = 0;
+  for (int i = 1; i < runLen; i++) if (runHist[i] > runHist[peakI]) peakI = i;
+  int maxV = runHist[peakI] > 1000 ? runHist[peakI] : 1000;
+  int px = -1, py = -1;
+  for (int i = 0; i < runLen; i++) {
+    int x = cx0 + (runLen > 1 ? (long)i * cw / (runLen - 1) : 0);
+    int y = cy0 + ch - (long)runHist[i] * ch / maxV;
+    if (px >= 0) {
+      tft.drawLine(px, py, x, y, COL_GOLD);
+      tft.drawLine(px, py + 1, x, y + 1, COL_GOLD);     // 2px for visibility
+    }
+    px = x; py = y;
+  }
+  tft.fillCircle(px, py, 3, COL_BANKER);                // the moment of death
+
+  // Leaderboard altitudes the run climbed past: 2nd-4th as unlabeled grey
+  // context (drawn first, so labeled lines paint over shared values), then
+  // the labeled high score and fifth-place lines.
+  for (int i = 1; i <= 3; i++)
+    if (hsVal[i] > 0)
+      drawChartLevel(hsVal[i], nullptr, TFT_LIGHTGREY, false, maxV);
+  if (hsVal[0] > 0 && runPeak > hsVal[0])
+    drawChartLevel(hsVal[0], "high score", COL_PLAYER, false, maxV);
+  if (hsVal[4] > 0 && runPeak > hsVal[4] && hsVal[4] != hsVal[0])
+    drawChartLevel(hsVal[4], "fifth", COL_TIE, true, maxV);
+
+  if (runHist[peakI] > 1000) {                          // mark peak glory
+    int peakX = cx0 + (runLen > 1 ? (long)peakI * cw / (runLen - 1) : 0);
+    tft.fillCircle(peakX, cy0, 3, TFT_WHITE);
+    tft.setTextDatum(peakX > 240 ? MR_DATUM : ML_DATUM);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("$" + String(runHist[peakI]),
+                   peakX > 240 ? peakX - 8 : peakX + 8, cy0 + 2, 2);
+  }
+
+  char line[48];
+  runSummary(line, sizeof line);
+  tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("to-do: put mocking screen here", 160, 130, 2);
+  tft.drawString(line, 160, 188, 2);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("Tap to rebuy for $1000", 160, 210, 2);
+  tft.drawString("Tap to rebuy for $1000", 160, 222, 2);
 }
 
 // Full redraw of the betting screen (boot, leaving settings, bust restart).
@@ -687,6 +788,10 @@ void runDeal() {
   lastBetP = betP; lastBetB = betB; lastBetT = betT;   // remembered for REBET
   betP = betB = betT = 0;
 
+  handsThisRun++;
+  recordRunPoint(bankroll);
+  if (bankroll > runPeak) runPeak = bankroll;
+
   pushBead(res);
   highlightWinner(res);
   drawHeader();
@@ -726,6 +831,7 @@ void resetGame() {
   betP = betB = betT = 0;
   lastBetP = lastBetB = lastBetT = 0;   // no rebets across lifetimes
   beadCount = 0;
+  resetRunStats();
   shuffleShoe();
   state = ST_BETTING;
   drawMainScreen();
@@ -896,6 +1002,7 @@ void setup() {
   loadScores();
 
   shuffleShoe();
+  resetRunStats();
   drawMainScreen();
 
   Serial.printf("Cheap Yellow Baccarat ready. Sound %s.\n", soundOn ? "on" : "off");

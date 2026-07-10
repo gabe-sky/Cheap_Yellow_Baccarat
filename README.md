@@ -113,7 +113,20 @@ Punto banco as implemented here:
   ends the hand immediately.
 - Otherwise the Player draws a third card on 0–5 and stands on 6–7. The Banker
   then draws by the standard tableau, which depends on the Banker's total and
-  the value of the Player's third card.
+  the value of the Player's third card:
+
+  | Banker total | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | (stood) |
+  |:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+  | **0–2** | D | D | D | D | D | D | D | D | D | D | D |
+  | **3** | D | D | D | D | D | D | D | D | S | D | D |
+  | **4** | S | S | D | D | D | D | D | D | S | S | D |
+  | **5** | S | S | S | S | D | D | D | D | S | S | D |
+  | **6** | S | S | S | S | S | S | D | D | S | S | S |
+  | **7** | S | S | S | S | S | S | S | S | S | S | S |
+
+  Columns are the point value of the Player's third card; **D** = Banker draws,
+  **S** = Banker stands. The last column applies when the Player stood (no
+  third card): the Banker simply draws on 0–5 and stands on 6–7.
 - Highest total wins. Payouts: Player 1:1, Banker 19:20 (commission rounded in
   the house's favor), Tie 8:1; Player and Banker bets push on a tie.
 - The shoe is 8 decks, shuffled with the ESP32's hardware RNG, and reshuffled

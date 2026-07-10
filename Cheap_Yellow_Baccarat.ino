@@ -62,6 +62,10 @@ struct Zone  { int x, y, w, h; };
 
 uint8_t shoe[SHOE_SIZE];
 int shoePos = 0;
+// Display-side twin of shoePos, advanced one card per on-screen flip: the
+// hand is fully dealt before the reveal starts, so the header counting from
+// shoePos would telegraph the number of third cards before they're shown.
+int shownPos = 0;
 
 void shuffleShoe() {
   for (int i = 0; i < SHOE_SIZE; i++) shoe[i] = i % 52;
@@ -70,6 +74,7 @@ void shuffleShoe() {
     uint8_t t = shoe[i]; shoe[i] = shoe[j]; shoe[j] = t;
   }
   shoePos = 0;
+  shownPos = 0;
 }
 
 uint8_t dealOne() { return shoe[shoePos++]; }
@@ -359,7 +364,7 @@ void drawHeader() {
   tft.drawString("BACCARAT", 2, 1, 2);
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  tft.drawString("Shoe " + String(SHOE_SIZE - shoePos), 160, 1, 2);
+  tft.drawString("Card " + String(SHOE_SIZE - shownPos), 160, 1, 2);
   tft.setTextDatum(TR_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString("$" + String(bankroll), 318, 1, 2);
@@ -682,6 +687,8 @@ void revealCard(bool banker, int i, uint8_t c) {
   delay(160);
   drawCardFace(x, CARD_Y, c);
   drawTotal(banker, i + 1);
+  shownPos++;
+  drawHeader();
   delay(340);
 }
 
@@ -750,7 +757,7 @@ void runDeal() {
     tft.fillRect(0, PANEL_Y, 320, 240 - PANEL_Y, TFT_BLACK);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(COL_GOLD, TFT_BLACK);
-    tft.drawString("Shuffling shoe...", 160, 190, 4);
+    tft.drawString("Shuffling cards...", 160, 190, 4);
     sShuffle();
     shuffleShoe();
     delay(500);

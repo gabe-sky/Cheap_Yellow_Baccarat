@@ -4,6 +4,12 @@ A full punto banco baccarat game for the **Cheap Yellow Display** (CYD, ESP32-24
 — the inexpensive ESP32 board with a built-in 320×240 touchscreen. Bet with
 touch chips, deal, watch the cards flip, and repeat until you're rich or busted.
 
+| ![Placing bets](images/gameplay-bet.jpeg) | ![Player's cards dealt](images/gameplay-player.jpeg) |
+|:---:|:---:|
+| *Place your bets* | *Player draws* |
+| ![Banker's cards dealt](images/gameplay-banker.jpeg) | ![Player wins the hand](images/gameplay-win.jpeg) |
+| *Banker draws* | *Player wins!* |
+
 ## Features
 
 - **Real casino rules**: 8-deck shoe, standard third-card tableau, natural 8/9s.

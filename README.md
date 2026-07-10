@@ -118,3 +118,7 @@ Punto banco as implemented here:
   the house's favor), Tie 8:1; Player and Banker bets push on a tie.
 - The shoe is 8 decks, shuffled with the ESP32's hardware RNG, and reshuffled
   when fewer than 16 cards remain.
+
+## License
+
+[MIT](LICENSE)

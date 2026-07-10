@@ -1,31 +1,31 @@
 # Cheap Yellow Baccarat
 
 A full punto banco baccarat game for the **Cheap Yellow Display** (CYD, ESP32-2432S028R)
-— the inexpensive ESP32 board with a built-in 320×240 touchscreen. Bet with
+-- the inexpensive ESP32 board with a built-in 320x240 touchscreen. Bet with
 touch chips, deal, watch the cards flip, and repeat until you're rich or busted.
 
 | ![Placing bets](images/gameplay-bet.jpeg) | ![Player's cards dealt](images/gameplay-player.jpeg) |
 |:---:|:---:|
 | *Place your bets* | *Player draws* |
 | ![Banker's cards dealt](images/gameplay-banker.jpeg) | ![Player wins the hand](images/gameplay-win.jpeg) |
-| *Banker draws* | *Player wins!* |
+| *Banker draws* | *Banker wins!* |
 
 ## Features
 
 - **Real casino rules**: 8-deck shoe, standard third-card tableau, natural 8/9s.
   Player pays 1:1, Banker pays 19:20 (5% commission), Tie pays 8:1 and pushes
   Player/Banker bets.
-- **Touch betting**: pick a chip size ($1–$500) and tap the Player, Tie, or
+- **Touch betting**: pick a chip size ($1-$500) and tap the Player, Tie, or
   Banker zones to stack bets. CLEAR takes them back; after a hand the same
   button becomes REBET to repeat your last wager.
 - **Bead road**: a scrolling strip of dots tracks recent results (blue = Player,
   red = Banker, green = Tie), just like the scoreboard displays in real casinos.
 - **Tutor mode**: an optional setting that pauses the deal to explain each
-  third-card drawing rule as it's applied — a painless way to finally learn
+  third-card drawing rule as it's applied -- a painless way to finally learn
   the tableau.
 - **High score table**: cash out your bankroll to compete for the top five,
   with an on-screen keyboard for name entry. Scores persist across power cycles.
-- **The death chart**: go broke and you're shown a graph of your entire run —
+- **The death chart**: go broke and you're shown a graph of your entire run --
   every peak, every collapse, and the exact moment it all ended. Complete with
   sad trombone.
 - **Sound and light**: chip clicks, win/lose jingles, and shuffle sounds on the
@@ -34,7 +34,7 @@ touch chips, deal, watch the cards flip, and repeat until you're rich or busted.
 ## Hardware
 
 Built for the **ESP32-2432S028R** ("Cheap Yellow Display"): an ESP32 with a
-2.8" 320×240 TFT (ILI9341 or ST7789 depending on the variant) and an XPT2046
+2.8" 320x240 TFT (ILI9341 or ST7789 depending on the variant) and an XPT2046
 resistive touch controller. Any similar ESP32 + TFT_eSPI-supported display +
 XPT2046 touch combination should work with minor adjustments (see
 [Adapting to your board](#adapting-to-your-board)).
@@ -54,7 +54,7 @@ Built with the **Arduino IDE** and the ESP32 Arduino core (3.x).
 2. **Configure TFT_eSPI for your display.** TFT_eSPI is configured per-board by
    editing `User_Setup.h` (or selecting a setup in `User_Setup_Select.h`) inside
    the library folder. You need the correct driver (`ILI9341_DRIVER` on most
-   CYDs — some variants use ST7789) and your display's SPI pins. If you have a
+   CYDs -- some variants use ST7789) and your display's SPI pins. If you have a
    CYD, ready-made setups are easy to find; see the excellent
    [ESP32-Cheap-Yellow-Display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display)
    community repo.
@@ -68,8 +68,8 @@ The screen is laid out landscape: a header bar (shoe count and bankroll), the
 bead road, the green felt where cards are dealt, and a control panel at the
 bottom.
 
-1. **Set your chip size** with the **−** and **+** buttons.
-2. **Place bets** by tapping the PLAYER, TIE, or BANKER zones — each tap adds
+1. **Set your chip size** with the **-** and **+** buttons.
+2. **Place bets** by tapping the PLAYER, TIE, or BANKER zones -- each tap adds
    one chip. Tap **CLEAR** to take all bets back, or **REBET** (same button,
    shown when the table is empty) to repeat your previous bet.
 3. Tap **DEAL**. Cards are revealed in casino order and third cards are drawn
@@ -85,7 +85,7 @@ $1000 rebuy.
 - **Tap "BACCARAT"** in the top-left corner to open **Settings** (sound on/off,
   tutor mode on/off).
 - **Tap your bankroll** in the top-right corner to view the high scores and
-  optionally **cash out** — banking your current total for a shot at the
+  optionally **cash out** -- banking your current total for a shot at the
   leaderboard and restarting at $1000.
 
 ## Adapting to your board
@@ -100,9 +100,9 @@ Everything hardware-specific is near the top of the sketch:
 - **Display pins and driver**: configured in TFT_eSPI's setup file, not in the
   sketch (see [Building](#building)).
 - **Speaker and LED pins**: `SPEAKER_PIN` and `LED_R/G/B`. If your board lacks
-  them, the sketch still runs — you'll just miss the fanfare. The LED helpers
+  them, the sketch still runs -- you'll just miss the fanfare. The LED helpers
   assume active-LOW wiring; flip the logic in `ledSet()` if yours differs.
-- **Rotation**: the game assumes landscape (`setRotation(1)`, 320×240). Other
+- **Rotation**: the game assumes landscape (`setRotation(1)`, 320x240). Other
   sizes would need layout changes; the coordinates are defined as constants in
   the "Layout" section.
 
@@ -113,26 +113,65 @@ Game state (settings and high scores) is stored in NVS flash via
 
 Punto banco as implemented here:
 
-- Cards 2–9 count face value, aces count 1, tens and face cards count 0. Hand
+- Cards 2-9 count face value, aces count 1, tens and face cards count 0. Hand
   value is the total modulo 10.
 - Player and Banker each get two cards. An 8 or 9 (a "natural") on either side
   ends the hand immediately.
-- Otherwise the Player draws a third card on 0–5 and stands on 6–7. The Banker
+- Otherwise the Player draws a third card on 0-5 and stands on 6-7. The Banker
   then draws by the standard tableau, which depends on the Banker's total and
   the value of the Player's third card:
 
-  | Banker total | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | (stood) |
-  |:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-  | **0–2** | D | D | D | D | D | D | D | D | D | D | D |
-  | **3** | D | D | D | D | D | D | D | D | S | D | D |
-  | **4** | S | S | D | D | D | D | D | D | S | S | D |
-  | **5** | S | S | S | S | D | D | D | D | S | S | D |
-  | **6** | S | S | S | S | S | S | D | D | S | S | S |
-  | **7** | S | S | S | S | S | S | S | S | S | S | S |
+  <table>
+    <tr>
+      <th rowspan="2">Banker total</th>
+      <th colspan="10">Player third card</th>
+      <th rowspan="2">(stood)</th>
+    </tr>
+    <tr>
+      <th>0</th><th>1</th><th>2</th><th>3</th><th>4</th>
+      <th>5</th><th>6</th><th>7</th><th>8</th><th>9</th>
+    </tr>
+    <tr align="center">
+      <th>0-2</th>
+      <td>D</td><td>D</td><td>D</td><td>D</td><td>D</td>
+      <td>D</td><td>D</td><td>D</td><td>D</td><td>D</td>
+      <td>D</td>
+    </tr>
+    <tr align="center">
+      <th>3</th>
+      <td>D</td><td>D</td><td>D</td><td>D</td><td>D</td>
+      <td>D</td><td>D</td><td>D</td><td>S</td><td>D</td>
+      <td>D</td>
+    </tr>
+    <tr align="center">
+      <th>4</th>
+      <td>S</td><td>S</td><td>D</td><td>D</td><td>D</td>
+      <td>D</td><td>D</td><td>D</td><td>S</td><td>S</td>
+      <td>D</td>
+    </tr>
+    <tr align="center">
+      <th>5</th>
+      <td>S</td><td>S</td><td>S</td><td>S</td><td>D</td>
+      <td>D</td><td>D</td><td>D</td><td>S</td><td>S</td>
+      <td>D</td>
+    </tr>
+    <tr align="center">
+      <th>6</th>
+      <td>S</td><td>S</td><td>S</td><td>S</td><td>S</td>
+      <td>S</td><td>D</td><td>D</td><td>S</td><td>S</td>
+      <td>S</td>
+    </tr>
+    <tr align="center">
+      <th>7</th>
+      <td>S</td><td>S</td><td>S</td><td>S</td><td>S</td>
+      <td>S</td><td>S</td><td>S</td><td>S</td><td>S</td>
+      <td>S</td>
+    </tr>
+  </table>
 
-  Columns are the point value of the Player's third card; **D** = Banker draws,
-  **S** = Banker stands. The last column applies when the Player stood (no
-  third card): the Banker simply draws on 0–5 and stands on 6–7.
+  **D** = Banker draws, **S** = Banker stands. The last column applies when
+  the Player stood (no third card): the Banker simply draws on 0-5 and stands
+  on 6-7.
 - Highest total wins. Payouts: Player 1:1, Banker 19:20 (commission rounded in
   the house's favor), Tie 8:1; Player and Banker bets push on a tie.
 - The shoe is 8 decks, shuffled with the ESP32's hardware RNG, and reshuffled

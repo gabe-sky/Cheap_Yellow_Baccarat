@@ -270,11 +270,17 @@ const Zone Z_KONA_R  = { 240,   0,  80, 48 };  //   R, L, R opens the test menu
 const Zone Z_CHT_ADD = {  60,  66, 200, 40 };  // test-menu buttons (+ Z_DONE)
 const Zone Z_CHT_CLR = {  60, 116, 200, 40 };
 
-// Name-entry keyboard: 7x4 grid, cells 0-25 = A-Z, 26 = DEL, 27 = OK.
+// Name-entry keyboard: 7x5 grid. Cells 0-31 type KB_CHARS[idx], then SPC,
+// DEL, OK fill out the bottom row.
 #define KB_X0 6
 #define KB_Y0 64
 #define KB_CW 44
 #define KB_CH 34
+const char KB_CHARS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ!?*$&.";
+#define KB_NCHARS 32
+#define KB_SPC 32
+#define KB_DEL 33
+#define KB_OK  34
 
 bool inZone(const Zone& z, int x, int y) {
   return x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h;
@@ -698,13 +704,15 @@ void drawScoresScreen(bool viewOnly) {
 
 void drawNameKey(int idx) {
   int x = KB_X0 + (idx % 7) * KB_CW, y = KB_Y0 + (idx / 7) * KB_CH;
-  char one[2] = { (char)('A' + idx), 0 };
-  const char* lbl = idx < 26 ? one : idx == 26 ? "DEL" : "OK";
-  uint16_t col = idx < 26 ? TFT_LIGHTGREY : idx == 26 ? COL_BANKER : TFT_GREEN;
+  char one[2] = { idx < KB_NCHARS ? KB_CHARS[idx] : ' ', 0 };
+  const char* lbl = idx < KB_NCHARS ? one
+                  : idx == KB_SPC  ? "SPC" : idx == KB_DEL ? "DEL" : "OK";
+  uint16_t col = idx == KB_DEL ? COL_BANKER
+               : idx == KB_OK  ? TFT_GREEN : TFT_LIGHTGREY;
   tft.fillRoundRect(x, y, KB_CW - 4, KB_CH - 4, 4, COL_PANEL);
   tft.drawRoundRect(x, y, KB_CW - 4, KB_CH - 4, 4, col);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(idx < 26 ? TFT_WHITE : col, COL_PANEL);
+  tft.setTextColor(idx < KB_DEL ? TFT_WHITE : col, COL_PANEL);
   tft.drawString(lbl, x + (KB_CW - 4) / 2, y + (KB_CH - 4) / 2, 2);
 }
 
@@ -723,7 +731,7 @@ void drawNameEntry() {
   tft.setTextColor(COL_GOLD, TFT_BLACK);
   tft.drawString("NEW HIGH SCORE - enter your name", 160, 10, 2);
   drawNameText();
-  for (int i = 0; i < 28; i++) drawNameKey(i);
+  for (int i = 0; i <= KB_OK; i++) drawNameKey(i);
 }
 
 // ------------------------------------------------------------- Deal flow ---
@@ -919,22 +927,25 @@ void handleTapScores(int x, int y) {
 void handleTapName(int x, int y) {
   if (x < KB_X0 || y < KB_Y0) return;
   int col = (x - KB_X0) / KB_CW, row = (y - KB_Y0) / KB_CH;
-  if (col > 6 || row > 3) return;
+  if (col > 6 || row > 4) return;
   int idx = row * 7 + col;
-  if (idx < 26) {
+  if (idx <= KB_SPC) {
     if (nameLen < NAME_MAX) {
-      nameBuf[nameLen++] = 'A' + idx;
+      nameBuf[nameLen++] = idx < KB_NCHARS ? KB_CHARS[idx] : ' ';
       nameBuf[nameLen] = 0;
       sClick();
       drawNameText();
     }
-  } else if (idx == 26) {
+  } else if (idx == KB_DEL) {
     if (nameLen > 0) {
       nameBuf[--nameLen] = 0;
       sClick();
       drawNameText();
     }
-  } else if (nameLen > 0) {  // OK needs at least one letter
+  } else if (idx == KB_OK) {
+    while (nameLen > 0 && nameBuf[nameLen - 1] == ' ')  // an all-space name
+      nameBuf[--nameLen] = 0;                           // would list as blank
+    if (nameLen == 0) { drawNameText(); return; }
     hsNew = insertScore(nameBuf, cashPending);
     saveScores();
     sWin();

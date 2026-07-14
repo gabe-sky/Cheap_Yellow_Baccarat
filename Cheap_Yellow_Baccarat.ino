@@ -51,7 +51,7 @@ TFT_eSPI tft = TFT_eSPI();
 // prototypes referencing Zone/Outcome fail if the types are declared later.
 enum Outcome { WIN_PLAYER, WIN_BANKER, WIN_TIE };
 enum State   { ST_BETTING, ST_RESULT, ST_GAMEOVER, ST_BUSTED, ST_SETTINGS,
-               ST_SCORES, ST_NAME, ST_SCORES_VIEW };
+               ST_SCORES, ST_NAME, ST_SCORES_VIEW, ST_CHEAT };
 struct Zone  { int x, y, w, h; };
 
 // ------------------------------------------------------------------ Shoe ---
@@ -127,12 +127,23 @@ void playHand() {
 // --------------------------------------------------------------- Betting ---
 State state = ST_BETTING;
 
-const int CHIPS[] = { 1, 10, 25, 50, 100, 500 };
-#define N_CHIPS 6
+const int CHIPS[] = { 1, 10, 25, 50, 100, 500, 1000, 10000 };
+#define N_CHIPS 8
 int chipIdx  = 2;                 // start on $25
 int bankroll = 1000;
 int betP = 0, betB = 0, betT = 0; // deducted from bankroll as placed
 int lastBetP = 0, lastBetB = 0, lastBetT = 0; // previous hand's bet, for REBET
+
+// High-roller chips unlock with the bankroll: $1000 at $10k, $10000 at $100k.
+// Gated on bankroll + bets on the table, so placing a big bet doesn't re-lock
+// the chip mid-hand; that sum only changes at settlement, where chipIdx is
+// clamped back down if the funds no longer qualify.
+int maxChipIdx() {
+  int funds = bankroll + betP + betB + betT;
+  if (funds >= 100000) return N_CHIPS - 1;
+  if (funds >= 10000)  return N_CHIPS - 2;
+  return N_CHIPS - 3;
+}
 
 // Death chart: bankroll after every hand of the current life, drawn on the
 // bust screen. Within-run only — each bust earns its own fresh shame.
@@ -173,6 +184,14 @@ void pushBead(uint8_t o) {
 Preferences prefs;        // NVS namespace "baccarat", survives reboots
 bool soundOn = true;
 bool teachOn = false;     // tutor mode: pause and explain each drawing rule
+
+// Progress through the hidden R,L,R corner-tap sequence on the settings
+// screen (0-2 taps matched so far). Reset on entry and on any stray tap.
+int konamiStep = 0;
+
+// Set when test-menu money is taken this run; a cheated bankroll cashes out
+// without being offered a high-score slot. Cleared on resetGame (fresh $1000).
+bool cheated = false;
 
 // ------------------------------------------------------------ High scores ---
 // Top five cash-outs of all time, persisted in NVS (keys hs0n/hs0v..hs4n/hs4v).
@@ -246,6 +265,10 @@ const Zone Z_DONE  = {  60, 186, 200, 40 };
 const Zone Z_BANK  = { 230,   0,  90, 18 };  // bankroll tap -> high scores
 const Zone Z_CASH  = {  30, 186, 120, 40 };  // high-score screen buttons
 const Zone Z_CANCL = { 170, 186, 120, 40 };
+const Zone Z_KONA_L  = {   0,   0,  80, 48 };  // settings: hidden corner taps;
+const Zone Z_KONA_R  = { 240,   0,  80, 48 };  //   R, L, R opens the test menu
+const Zone Z_CHT_ADD = {  60,  66, 200, 40 };  // test-menu buttons (+ Z_DONE)
+const Zone Z_CHT_CLR = {  60, 116, 200, 40 };
 
 // Name-entry keyboard: 7x4 grid, cells 0-25 = A-Z, 26 = DEL, 27 = OK.
 #define KB_X0 6
@@ -506,6 +529,30 @@ void drawSettingsScreen() {
   tft.drawString("SETTINGS", 160, 30, 4);
   drawToggle(Z_SOUND, "SOUND", soundOn);
   drawToggle(Z_TEACH, "TUTOR", teachOn);
+  tft.fillRoundRect(Z_DONE.x, Z_DONE.y, Z_DONE.w, Z_DONE.h, 5, TFT_DARKGREEN);
+  tft.drawRoundRect(Z_DONE.x, Z_DONE.y, Z_DONE.w, Z_DONE.h, 5, TFT_GREEN);
+  tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+  tft.drawString("DONE", Z_DONE.x + Z_DONE.w / 2, Z_DONE.y + Z_DONE.h / 2, 4);
+}
+
+// ------------------------------------------------- Hidden test menu ---
+// Reached from the settings screen by tapping the top-right, top-left, then
+// top-right corners. Dev tools only: free money and a high-score wipe.
+void drawCheatStatus(const char* msg) {
+  tft.fillRect(0, 162, 320, 20, TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString(msg, 160, 172, 2);
+}
+
+void drawCheatScreen() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(COL_GOLD, TFT_BLACK);
+  tft.drawString("TEST MENU", 160, 30, 4);
+  drawButton(Z_CHT_ADD, "ADD $10,000", TFT_GREEN, TFT_GREEN);
+  drawButton(Z_CHT_CLR, "CLEAR HIGH SCORES", COL_BANKER, COL_BANKER);
+  drawCheatStatus(("Bankroll: $" + String(bankroll)).c_str());
   tft.fillRoundRect(Z_DONE.x, Z_DONE.y, Z_DONE.w, Z_DONE.h, 5, TFT_DARKGREEN);
   tft.drawRoundRect(Z_DONE.x, Z_DONE.y, Z_DONE.w, Z_DONE.h, 5, TFT_GREEN);
   tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
@@ -795,6 +842,8 @@ void runDeal() {
   lastBetP = betP; lastBetB = betB; lastBetT = betT;   // remembered for REBET
   betP = betB = betT = 0;
 
+  if (chipIdx > maxChipIdx()) chipIdx = maxChipIdx();  // losses can re-lock chips
+
   handsThisRun++;
   recordRunPoint(bankroll);
   if (bankroll > runPeak) runPeak = bankroll;
@@ -837,6 +886,8 @@ void resetGame() {
   bankroll = 1000;
   betP = betB = betT = 0;
   lastBetP = lastBetB = lastBetT = 0;   // no rebets across lifetimes
+  if (chipIdx > maxChipIdx()) chipIdx = maxChipIdx();
+  cheated = false;
   beadCount = 0;
   resetRunStats();
   shuffleShoe();
@@ -852,8 +903,9 @@ void handleTapScores(int x, int y) {
   } else if (inZone(Z_CASH, x, y)) {
     sClick();
     cashPending = bankroll + betP + betB + betT;   // pick your chips back up too
-    Serial.printf("Cash out: $%d\n", cashPending);
-    if (cashPending > hsVal[4]) {
+    Serial.printf("Cash out: $%d%s\n", cashPending,
+                  cheated ? " (cheated - high scores skipped)" : "");
+    if (cashPending > hsVal[4] && !cheated) {
       nameLen = 0;
       nameBuf[0] = 0;
       state = ST_NAME;
@@ -894,6 +946,7 @@ void handleTapName(int x, int y) {
 void handleTapBetting(int x, int y) {
   if (inZone(Z_TITLE, x, y)) {
     sClick();
+    konamiStep = 0;
     state = ST_SETTINGS;
     drawSettingsScreen();
     return;
@@ -920,7 +973,7 @@ void handleTapBetting(int x, int y) {
   } else if (inZone(Z_MINUS, x, y)) {
     if (chipIdx > 0) { chipIdx--; sClick(); drawChipValue(); }
   } else if (inZone(Z_PLUS, x, y)) {
-    if (chipIdx < N_CHIPS - 1) { chipIdx++; sClick(); drawChipValue(); }
+    if (chipIdx < maxChipIdx()) { chipIdx++; sClick(); drawChipValue(); }
   } else if (inZone(Z_CLEAR, x, y)) {
     int total = betP + betB + betT;
     int lastTotal = lastBetP + lastBetB + lastBetT;
@@ -976,6 +1029,38 @@ void handleTap(int x, int y) {
         prefs.putBool("teach", teachOn);
         drawToggle(Z_TEACH, "TUTOR", teachOn);
         sClick();
+      } else if (inZone(Z_DONE, x, y)) {
+        sClick();
+        state = ST_BETTING;
+        drawMainScreen();
+      } else if (inZone(Z_KONA_R, x, y)) {
+        // Right corner matches at steps 0 and 2; at step 1 it restarts the
+        // sequence rather than dying (this R could be a fresh first tap).
+        konamiStep = (konamiStep == 1) ? 1 : konamiStep + 1;
+        if (konamiStep == 3) {
+          konamiStep = 0;
+          sClick();
+          state = ST_CHEAT;
+          drawCheatScreen();
+        }
+      } else if (inZone(Z_KONA_L, x, y)) {
+        konamiStep = (konamiStep == 1) ? 2 : 0;
+      } else {
+        konamiStep = 0;
+      }
+      break;
+    case ST_CHEAT:
+      if (inZone(Z_CHT_ADD, x, y)) {
+        bankroll += 10000;
+        cheated = true;
+        sChip();
+        drawCheatStatus(("Bankroll: $" + String(bankroll)).c_str());
+      } else if (inZone(Z_CHT_CLR, x, y)) {
+        for (int i = 0; i < 5; i++) { hsVal[i] = 0; hsName[i][0] = 0; }
+        saveScores();
+        hsNew = -1;
+        sClick();
+        drawCheatStatus("High scores cleared.");
       } else if (inZone(Z_DONE, x, y)) {
         sClick();
         state = ST_BETTING;
